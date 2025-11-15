@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+{% block title %}Settings - AI Ticket Classifier{% endblock %}
+{% block nav_settings %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Settings</h1>
+    <p class="page-subtitle">Configure system behavior and integrations</p>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+    <!-- API Configuration -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">API Configuration</h2>
+        </div>
+        <div class="card-body">
+            <form id="apiConfigForm">
+                <div class="form-group">
+                    <label class="form-label">OpenAI API Key</label>
+                    <input 
+                        type="password" 
+                        id="apiKey" 
+                        class="form-input" 
+                        placeholder="sk-..."
+                    >
+                    <p class="form-help">Your OpenAI API key for classification</p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Model</label>
+                    <select id="model" class="form-select">
+                        <option value="gpt-4o-mini">GPT-4o Mini (Fast & Cheap)</option>
+                        <option value="gpt-4o">GPT-4o (Best Quality)</option>
+                        <option value="gpt-4">GPT-4 (High Quality)</option>
+                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Budget)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Temperature: <span id="tempValue">0.3</span></label>
+                    <input 
+                        type="range" 
+                        id="temperature" 
+                        class="form-input" 
+                        min="0" 
+                        max="1" 
+                        step="0.1" 
+                        value="0.3"
+                        oninput="document.getElementById('tempValue').textContent = this.value"
+                    >
+                    <p class="form-help">Lower = more consistent, Higher = more creative</p>
+                </div>
+                
+                <button type="button" class="btn btn-primary" onclick="testOpenAI()">
+                    Test Connection
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- CRM Integration -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">CRM Integration</h2>
+        </div>
+        <div class="card-body">
+            <form id="crmConfigForm">
+                <div class="form-group">
+                    <label class="form-label">CRM Mode</label>
+                    <select id="crmMode" class="form-select" onchange="toggleCrmEndpoint()">
+                        <option value="mock">Mock (In-memory)</option>
+                        <option value="mock-http">Mock HTTP (Simulated)</option>
+                        <option value="real">Real CRM Endpoint</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="crmEndpointGroup" style="display: none;">
+                    <label class="form-label">CRM Endpoint URL</label>
+                    <input 
+                        type="url" 
+                        id="crmEndpoint" 
+                        class="form-input" 
+                        placeholder="https://crm.example.com/api/tickets"
+                    >
+                    <p class="form-help">Full URL for real CRM integration</p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Simulate Delay (seconds)</label>
+                    <input 
+                        type="number" 
+                        id="simulateDelay" 
+                        class="form-input" 
+                        value="0.1" 
+                        step="0.1" 
+                        min="0"
+                    >
+                    <p class="form-help">For testing error handling (mock-http mode)</p>
+                </div>
+                
+                <button type="button" class="btn btn-primary" onclick="testCRM()">
+                    Test CRM Connection
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Confidence Thresholds -->
+<div class="card mt-6">
+    <div class="card-header">
+        <h2 class="card-title">Confidence Thresholds</h2>
+    </div>
+    <div class="card-body">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem;">
+            <div class="form-group">
+                <label class="form-label">High Confidence: <span id="highValue">0.85</span></label>
+                <input 
+                    type="range" 
+                    id="confidenceHigh" 
+                    class="form-input" 
+                    min="0.5" 
+                    max="1.0" 
+                    step="0.05" 
+                    value="0.85"
+                    oninput="document.getElementById('highValue').textContent = this.value"
+                >
+                <p class="form-help">Auto-route without review</p>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Medium Confidence: <span id="mediumValue">0.70</span></label>
+                <input 
+                    type="range" 
+                    id="confidenceMedium" 
+                    class="form-input" 
+                    min="0.3" 
+                    max="0.9" 
+                    step="0.05" 
+                    value="0.70"
+                    oninput="document.getElementById('mediumValue').textContent = this.value"
+                >
+                <p class="form-help">Flag for review but process</p>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Low Confidence: <span id="lowValue">0.50</span></label>
+                <input 
+                    type="range" 
+                    id="confidenceLow" 
+                    class="form-input" 
+                    min="0.1" 
+                    max="0.8" 
+                    step="0.05" 
+                    value="0.50"
+                    oninput="document.getElementById('lowValue').textContent = this.value"
+                >
+                <p class="form-help">Require human verification</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Management -->
+<div class="card mt-6">
+    <div class="card-header">
+        <h2 class="card-title">Category Management</h2>
+    </div>
+    <div class="card-body">
+        <div id="categoriesList"></div>
+        <div class="form-group mt-4">
+            <label class="form-label">Add New Category</label>
+            <div class="flex gap-2">
+                <input 
+                    type="text" 
+                    id="newCategory" 
+                    class="form-input" 
+                    placeholder="Enter category name..."
+                >
+                <button class="btn btn-primary" onclick="addCategory()">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Output Preferences -->
+<div class="card mt-6">
+    <div class="card-header">
+        <h2 class="card-title">Output Preferences</h2>
+    </div>
+    <div class="card-body">
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 2rem;">
+            <div class="form-group">
+                <label class="form-label">Default Output Format</label>
+                <select id="outputFormat" class="form-select">
+                    <option value="simple">Simple</option>
+                    <option value="detailed" selected>Detailed</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">
+                    <input type="checkbox" id="autoExport">
+                    Auto-export after classification
+                </label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Save Button -->
+<div class="mt-6 flex justify-between">
+    <button class="btn btn-secondary" onclick="loadSettings()">Reset to Saved</button>
+    <button class="btn btn-primary btn-lg" onclick="saveSettings()">
+        💾 Save All Settings
+    </button>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentConfig = {};
+let categories = ['Billing', 'Technical Issue', 'Sales Inquiry', 'Other'];
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+});
+
+async function loadSettings() {
+    try {
+        Loading.show('Loading settings...');
+        const data = await API.getConfig();
+        Loading.hide();
+        
+        if (data.success) {
+            currentConfig = data.config;
+            applySettings(data.config);
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error('Failed to load settings');
+    }
+}
+
+function applySettings(config) {
+    // API Configuration
+    if (config.openai_api_key && !config.openai_api_key.startsWith('****')) {
+        document.getElementById('apiKey').value = config.openai_api_key;
+    }
+    document.getElementById('model').value = config.model || 'gpt-4o-mini';
+    document.getElementById('temperature').value = config.temperature || 0.3;
+    document.getElementById('tempValue').textContent = config.temperature || 0.3;
+    
+    // CRM Configuration
+    document.getElementById('crmMode').value = config.crm_mode || 'mock';
+    document.getElementById('crmEndpoint').value = config.crm_real_endpoint || '';
+    toggleCrmEndpoint();
+    
+    // Confidence Thresholds
+    document.getElementById('confidenceHigh').value = config.confidence_high || 0.85;
+    document.getElementById('highValue').textContent = config.confidence_high || 0.85;
+    document.getElementById('confidenceMedium').value = config.confidence_medium || 0.70;
+    document.getElementById('mediumValue').textContent = config.confidence_medium || 0.70;
+    document.getElementById('confidenceLow').value = config.confidence_low || 0.50;
+    document.getElementById('lowValue').textContent = config.confidence_low || 0.50;
+    
+    // Categories
+    categories = config.categories || categories;
+    renderCategories();
+    
+    // Output Preferences
+    document.getElementById('outputFormat').value = config.output_format || 'detailed';
+}
+
+function toggleCrmEndpoint() {
+    const mode = document.getElementById('crmMode').value;
+    const endpointGroup = document.getElementById('crmEndpointGroup');
+    endpointGroup.style.display = mode === 'real' ? 'block' : 'none';
+}
+
+function renderCategories() {
+    const list = document.getElementById('categoriesList');
+    list.innerHTML = categories.map(cat => `
+        <div class="flex items-center justify-between mb-2 p-2" style="border: 1px solid var(--neutral-200); border-radius: var(--radius-md);">
+            <span class="badge ${getCategoryBadge(cat)}">${cat}</span>
+            <button class="btn btn-sm btn-danger" onclick="removeCategory('${cat}')" ${categories.length <= 2 ? 'disabled' : ''}>
+                Remove
+            </button>
+        </div>
+    `).join('');
+}
+
+function addCategory() {
+    const input = document.getElementById('newCategory');
+    const newCat = input.value.trim();
+    
+    if (!newCat) {
+        Toast.warning('Please enter a category name');
+        return;
+    }
+    
+    if (categories.includes(newCat)) {
+        Toast.warning('Category already exists');
+        return;
+    }
+    
+    categories.push(newCat);
+    renderCategories();
+    input.value = '';
+    Toast.success('Category added (remember to save)');
+}
+
+function removeCategory(cat) {
+    if (categories.length <= 2) {
+        Toast.warning('Must have at least 2 categories');
+        return;
+    }
+    
+    if (confirm(`Remove category "${cat}"?`)) {
+        categories = categories.filter(c => c !== cat);
+        renderCategories();
+        Toast.info('Category removed (remember to save)');
+    }
+}
+
+async function saveSettings() {
+    const updates = {
+        openai_api_key: document.getElementById('apiKey').value,
+        model: document.getElementById('model').value,
+        temperature: parseFloat(document.getElementById('temperature').value),
+        crm_mode: document.getElementById('crmMode').value,
+        crm_real_endpoint: document.getElementById('crmEndpoint').value,
+        confidence_high: parseFloat(document.getElementById('confidenceHigh').value),
+        confidence_medium: parseFloat(document.getElementById('confidenceMedium').value),
+        confidence_low: parseFloat(document.getElementById('confidenceLow').value),
+        categories: categories,
+        output_format: document.getElementById('outputFormat').value
+    };
+    
+    try {
+        Loading.show('Saving settings...');
+        const data = await API.updateConfig(updates);
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success('Settings saved successfully');
+            await loadSettings();
+        } else {
+            Toast.error('Failed to save settings');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error('Failed to save settings: ' + error.message);
+    }
+}
+
+async function testOpenAI() {
+    const apiKey = document.getElementById('apiKey').value;
+    
+    if (!apiKey || apiKey.startsWith('****')) {
+        Toast.warning('Please enter a valid API key');
+        return;
+    }
+    
+    try {
+        Loading.show('Testing OpenAI connection...');
+        const data = await API.testOpenAI(apiKey);
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success('✓ OpenAI API connection successful');
+        } else {
+            Toast.error('✗ ' + (data.error || 'Connection failed'));
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error('✗ Connection test failed: ' + error.message);
+    }
+}
+
+async function testCRM() {
+    const mode = document.getElementById('crmMode').value;
+    const endpoint = document.getElementById('crmEndpoint').value;
+    
+    if (mode === 'real' && !endpoint) {
+        Toast.warning('Please enter CRM endpoint URL');
+        return;
+    }
+    
+    try {
+        Loading.show('Testing CRM connection...');
+        const data = await API.testCRM(mode, endpoint);
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success(`✓ CRM connection successful in ${mode} mode`);
+        } else {
+            Toast.error('✗ ' + (data.error || 'Connection failed'));
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error('✗ Connection test failed: ' + error.message);
+    }
+}
+</script>
+{% endblock %}

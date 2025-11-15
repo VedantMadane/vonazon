@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Review Queue - AI Ticket Classifier{% endblock %}
+{% block nav_review %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Review Queue</h1>
+    <p class="page-subtitle">Review and approve tickets flagged for human verification</p>
+</div>
+
+<!-- Filter Tabs -->
+<div class="card mb-6">
+    <div class="card-body">
+        <div class="flex gap-4">
+            <button class="btn btn-sm" id="filterAll" onclick="filterQueue(null)">All (<span id="countAll">0</span>)</button>
+            <button class="btn btn-sm" id="filterLow" onclick="filterQueue('low')">Low Confidence (<span id="countLow">0</span>)</button>
+            <button class="btn btn-sm" id="filterMedium" onclick="filterQueue('medium')">Medium (<span id="countMedium">0</span>)</button>
+            <button class="btn btn-sm" id="filterHigh" onclick="filterQueue('high')">High (<span id="countHigh">0</span>)</button>
+        </div>
+    </div>
+</div>
+
+<!-- Queue Container -->
+<div id="queueContainer"></div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentFilter = null;
+let queueData = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadReviewQueue();
+    document.getElementById('filterAll').classList.add('btn-primary');
+});
+
+async function loadReviewQueue(filter = null) {
+    try {
+        Loading.show('Loading review queue...');
+        const data = await API.getReviewQueue(filter);
+        Loading.hide();
+        
+        if (data.success) {
+            queueData = data.queue;
+            updateCounts();
+            renderQueue(data.queue);
+        } else {
+            Toast.error('Failed to load review queue');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error(error.message);
+    }
+}
+
+function updateCounts() {
+    const all = queueData.length;
+    const low = queueData.filter(t => t.confidence < 0.50).length;
+    const medium = queueData.filter(t => t.confidence >= 0.50 && t.confidence < 0.70).length;
+    const high = queueData.filter(t => t.confidence >= 0.70).length;
+    
+    document.getElementById('countAll').textContent = all;
+    document.getElementById('countLow').textContent = low;
+    document.getElementById('countMedium').textContent = medium;
+    document.getElementById('countHigh').textContent = high;
+}
+
+function filterQueue(filter) {
+    currentFilter = filter;
+    ['filterAll', 'filterLow', 'filterMedium', 'filterHigh'].forEach(id => {
+        document.getElementById(id).classList.remove('btn-primary');
+        document.getElementById(id).classList.add('btn-secondary');
+    });
+    document.getElementById('filter' + (filter ? filter.charAt(0).toUpperCase() + filter.slice(1) : 'All')).classList.add('btn-primary');
+    document.getElementById('filter' + (filter ? filter.charAt(0).toUpperCase() + filter.slice(1) : 'All')).classList.remove('btn-secondary');
+    
+    loadReviewQueue(filter);
+}
+
+function renderQueue(tickets) {
+    const container = document.getElementById('queueContainer');
+    
+    if (tickets.length === 0) {
+        container.innerHTML = createEmptyState('No tickets pending review', '✓');
+        return;
+    }
+    
+    container.innerHTML = tickets.map(ticket => `
+        <div class="card mb-4">
+            <div class="card-header">
+                <div>
+                    <code>${ticket.id}</code>
+                    <span class="badge ${getConfidenceBadge(ticket.confidence)} ml-2">${formatConfidence(ticket.confidence)}</span>
+                </div>
+                <span class="badge ${getCategoryBadge(ticket.category)}">${ticket.category}</span>
+            </div>
+            <div class="card-body">
+                <div class="mb-4">
+                    <strong>Ticket Content:</strong>
+                    <p class="mt-2">${ticket.content}</p>
+                </div>
+                
+                ${ticket.reasoning ? `
+                    <div class="mb-4">
+                        <strong>AI Reasoning:</strong>
+                        <p class="text-sm text-neutral mt-2">${ticket.reasoning}</p>
+                    </div>
+                ` : ''}
+                
+                ${ticket.alternative_category ? `
+                    <div class="mb-4">
+                        <strong>Alternative Category:</strong>
+                        <span class="badge ${getCategoryBadge(ticket.alternative_category)}">${ticket.alternative_category}</span>
+                    </div>
+                ` : ''}
+                
+                <div class="form-group">
+                    <label class="form-label">Review Action</label>
+                    <div class="flex gap-4">
+                        <button class="btn btn-success" onclick="approveTicket('${ticket.id}')">
+                            ✓ Approve
+                        </button>
+                        <button class="btn btn-warning" onclick="showCategoryChange('${ticket.id}', '${ticket.category}')">
+                            ✎ Change Category
+                        </button>
+                        <button class="btn btn-danger" onclick="rejectTicket('${ticket.id}')">
+                            ✗ Reject
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="changeForm_${ticket.id}" style="display: none;" class="mt-4">
+                    <div class="form-group">
+                        <label class="form-label">New Category</label>
+                        <select id="newCategory_${ticket.id}" class="form-select">
+                            <option value="Billing">Billing</option>
+                            <option value="Technical Issue">Technical Issue</option>
+                            <option value="Sales Inquiry">Sales Inquiry</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Notes (Optional)</label>
+                        <textarea id="notes_${ticket.id}" class="form-textarea" rows="2"></textarea>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="submitCategoryChange('${ticket.id}')">Save</button>
+                        <button class="btn btn-secondary" onclick="document.getElementById('changeForm_${ticket.id}').style.display='none'">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function approveTicket(ticketId) {
+    try {
+        Loading.show('Approving ticket...');
+        const data = await API.approveTicket(ticketId);
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success('Ticket approved and pushed to CRM');
+            loadReviewQueue(currentFilter);
+        } else {
+            Toast.error(data.error || 'Failed to approve ticket');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error(error.message);
+    }
+}
+
+function showCategoryChange(ticketId, currentCategory) {
+    document.getElementById(`changeForm_${ticketId}`).style.display = 'block';
+    document.getElementById(`newCategory_${ticketId}`).value = currentCategory;
+}
+
+async function submitCategoryChange(ticketId) {
+    const newCategory = document.getElementById(`newCategory_${ticketId}`).value;
+    const notes = document.getElementById(`notes_${ticketId}`).value;
+    
+    try {
+        Loading.show('Updating ticket...');
+        const data = await API.updateReviewTicket(ticketId, newCategory, 1.0, notes);
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success('Ticket updated and pushed to CRM');
+            loadReviewQueue(currentFilter);
+        } else {
+            Toast.error(data.error || 'Failed to update ticket');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error(error.message);
+    }
+}
+
+async function rejectTicket(ticketId) {
+    if (!confirm('Are you sure you want to reject this ticket?')) return;
+    
+    try {
+        Loading.show('Rejecting ticket...');
+        const data = await API.updateTicket(ticketId, {
+            requires_review: false,
+            reviewed_by: 'system',
+            review_notes: 'Rejected by reviewer',
+            category: 'Other'
+        });
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.warning('Ticket rejected');
+            loadReviewQueue(currentFilter);
+        } else {
+            Toast.error(data.error || 'Failed to reject ticket');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error(error.message);
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}History & Analytics - AI Ticket Classifier{% endblock %}
+{% block nav_history %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">History & Analytics</h1>
+    <p class="page-subtitle">View past classifications and performance metrics</p>
+</div>
+
+<!-- Period Filter -->
+<div class="card mb-6">
+    <div class="card-body">
+        <div class="flex gap-4 items-center">
+            <strong>Time Period:</strong>
+            <button class="btn btn-sm btn-primary" id="periodAll" onclick="changePeriod('all')">All Time</button>
+            <button class="btn btn-sm btn-secondary" id="periodMonth" onclick="changePeriod('month')">Last Month</button>
+            <button class="btn btn-sm btn-secondary" id="periodWeek" onclick="changePeriod('week')">Last Week</button>
+            <button class="btn btn-sm btn-secondary" id="periodToday" onclick="changePeriod('today')">Today</button>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Dashboard -->
+<div id="statisticsDashboard"></div>
+
+<!-- Category Breakdown -->
+<div class="card mb-6">
+    <div class="card-header">
+        <h2 class="card-title">Category Breakdown</h2>
+    </div>
+    <div class="card-body">
+        <div id="categoryBreakdown"></div>
+    </div>
+</div>
+
+<!-- Classification History -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Classification History</h2>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-success" onclick="exportHistory()">Export All</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="form-group">
+            <input 
+                type="text" 
+                id="searchInput" 
+                class="form-input" 
+                placeholder="Search tickets by content, ID, or category..."
+            >
+        </div>
+        <div id="historyTable"></div>
+        <div id="pagination" class="mt-4 flex justify-between items-center"></div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentPeriod = 'all';
+let currentPage = 0;
+const pageSize = 50;
+let allTickets = [];
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadStatistics();
+    loadHistory();
+    
+    // Search functionality
+    const searchInput = document.getElementById('searchInput');
+    searchInput.addEventListener('input', debounce(filterHistory, 300));
+});
+
+async function changePeriod(period) {
+    currentPeriod = period;
+    ['periodAll', 'periodMonth', 'periodWeek', 'periodToday'].forEach(id => {
+        const btn = document.getElementById(id);
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+    });
+    document.getElementById('period' + period.charAt(0).toUpperCase() + period.slice(1)).classList.add('btn-primary');
+    document.getElementById('period' + period.charAt(0).toUpperCase() + period.slice(1)).classList.remove('btn-secondary');
+    
+    await loadStatistics();
+}
+
+async function loadStatistics() {
+    try {
+        const data = await API.getStatistics(currentPeriod);
+        if (data.success) {
+            renderStatistics(data.statistics);
+        }
+    } catch (error) {
+        Toast.error('Failed to load statistics');
+    }
+}
+
+function renderStatistics(stats) {
+    const dashboard = document.getElementById('statisticsDashboard');
+    
+    dashboard.innerHTML = `
+        <div class="stats-grid mb-6">
+            <div class="stat-card">
+                <div class="stat-icon primary">📊</div>
+                <div class="stat-label">Total Tickets</div>
+                <div class="stat-value">${stats.total_tickets}</div>
+                <div class="stat-change">${stats.period === 'all' ? 'All time' : 'Selected period'}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon success">✓</div>
+                <div class="stat-label">Avg Confidence</div>
+                <div class="stat-value">${formatConfidence(stats.average_confidence)}</div>
+                <div class="stat-change">
+                    High: ${stats.high_confidence_count} | 
+                    Med: ${stats.medium_confidence_count} | 
+                    Low: ${stats.low_confidence_count}
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon warning">⚠</div>
+                <div class="stat-label">Review Rate</div>
+                <div class="stat-value">${stats.review_rate}%</div>
+                <div class="stat-change">Flagged for human review</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon success">🎯</div>
+                <div class="stat-label">CRM Success</div>
+                <div class="stat-value">${stats.crm_success_rate}%</div>
+                <div class="stat-change">Push success rate</div>
+            </div>
+        </div>
+    `;
+    
+    renderCategoryBreakdown(stats.category_distribution);
+}
+
+function renderCategoryBreakdown(distribution) {
+    const total = Object.values(distribution).reduce((sum, count) => sum + count, 0);
+    const breakdown = document.getElementById('categoryBreakdown');
+    
+    if (total === 0) {
+        breakdown.innerHTML = createEmptyState('No data available', '📊');
+        return;
+    }
+    
+    breakdown.innerHTML = `
+        <div class="table-container">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Count</th>
+                        <th>Percentage</th>
+                        <th>Visual</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.entries(distribution).map(([category, count]) => {
+                        const percentage = (count / total * 100).toFixed(1);
+                        return `
+                            <tr>
+                                <td><span class="badge ${getCategoryBadge(category)}">${category}</span></td>
+                                <td><strong>${count}</strong></td>
+                                <td>${percentage}%</td>
+                                <td>
+                                    <div class="progress">
+                                        <div class="progress-bar ${getConfidenceColor(count/total)}" 
+                                             style="width: ${percentage}%"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+async function loadHistory() {
+    try {
+        const data = await API.getTickets(1000, 0);
+        if (data.success) {
+            allTickets = data.tickets;
+            renderHistory(allTickets);
+        }
+    } catch (error) {
+        Toast.error('Failed to load history');
+    }
+}
+
+function filterHistory() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const filtered = allTickets.filter(ticket => 
+        ticket.content.toLowerCase().includes(searchTerm) ||
+        ticket.id.toLowerCase().includes(searchTerm) ||
+        ticket.category.toLowerCase().includes(searchTerm)
+    );
+    currentPage = 0;
+    renderHistory(filtered);
+}
+
+function renderHistory(tickets) {
+    const table = document.getElementById('historyTable');
+    
+    if (tickets.length === 0) {
+        table.innerHTML = createEmptyState('No tickets found', '🔍');
+        document.getElementById('pagination').innerHTML = '';
+        return;
+    }
+    
+    const start = currentPage * pageSize;
+    const end = start + pageSize;
+    const pageTickets = tickets.slice(start, end);
+    
+    table.innerHTML = `
+        <div class="table-container">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Ticket ID</th>
+                        <th>Content</th>
+                        <th>Category</th>
+                        <th>Confidence</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pageTickets.map(ticket => `
+                        <tr>
+                            <td class="text-sm">${formatDate(ticket.timestamp)}</td>
+                            <td><code>${ticket.id}</code></td>
+                            <td style="max-width: 400px;">${truncateText(ticket.content, 100)}</td>
+                            <td><span class="badge ${getCategoryBadge(ticket.category)}">${ticket.category}</span></td>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    <div class="progress" style="width: 60px;">
+                                        <div class="progress-bar ${getConfidenceColor(ticket.confidence)}" 
+                                             style="width: ${ticket.confidence * 100}%"></div>
+                                    </div>
+                                    <span class="text-sm">${formatConfidence(ticket.confidence)}</span>
+                                </div>
+                            </td>
+                            <td>
+                                ${ticket.requires_review 
+                                    ? '<span class="badge badge-warning">Review</span>' 
+                                    : '<span class="badge badge-success">Success</span>'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    renderPagination(tickets.length);
+}
+
+function renderPagination(totalItems) {
+    const pagination = document.getElementById('pagination');
+    const totalPages = Math.ceil(totalItems / pageSize);
+    
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+    
+    pagination.innerHTML = `
+        <div>Showing ${currentPage * pageSize + 1} - ${Math.min((currentPage + 1) * pageSize, totalItems)} of ${totalItems}</div>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-secondary" ${currentPage === 0 ? 'disabled' : ''} 
+                    onclick="changePage(${currentPage - 1})">Previous</button>
+            <span class="px-4">Page ${currentPage + 1} of ${totalPages}</span>
+            <button class="btn btn-sm btn-secondary" ${currentPage >= totalPages - 1 ? 'disabled' : ''} 
+                    onclick="changePage(${currentPage + 1})">Next</button>
+        </div>
+    `;
+}
+
+function changePage(page) {
+    currentPage = page;
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const filtered = searchTerm ? allTickets.filter(ticket => 
+        ticket.content.toLowerCase().includes(searchTerm) ||
+        ticket.id.toLowerCase().includes(searchTerm) ||
+        ticket.category.toLowerCase().includes(searchTerm)
+    ) : allTickets;
+    renderHistory(filtered);
+}
+
+async function exportHistory() {
+    try {
+        await API.exportData('json', {});
+        Toast.success('History exported successfully');
+    } catch (error) {
+        Toast.error('Export failed: ' + error.message);
+    }
+}
+</script>
+{% endblock %}

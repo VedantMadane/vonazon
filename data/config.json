@@ -1,0 +1,17 @@
+{
+  "openai_api_key": "",
+  "model": "gpt-4o-mini",
+  "temperature": 0.3,
+  "categories": [
+    "Billing",
+    "Technical Issue",
+    "Sales Inquiry",
+    "Other"
+  ],
+  "confidence_high": 0.85,
+  "confidence_medium": 0.7,
+  "confidence_low": 0.5,
+  "crm_mode": "mock",
+  "crm_real_endpoint": "",
+  "output_format": "detailed"
+}

@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - AI Ticket Classifier{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">Overview of your ticket classification system</p>
+</div>
+
+<!-- Statistics Cards -->
+<div class="stats-grid">
+    <div class="stat-card" onclick="window.location.href='/history'">
+        <div class="stat-header">
+            <div class="stat-icon primary">📊</div>
+        </div>
+        <div class="stat-label">Total Tickets</div>
+        <div class="stat-value" id="totalTickets">0</div>
+        <div class="stat-change">All time</div>
+    </div>
+    
+    <div class="stat-card" onclick="window.location.href='/history'">
+        <div class="stat-header">
+            <div class="stat-icon success">✓</div>
+        </div>
+        <div class="stat-label">Avg Confidence</div>
+        <div class="stat-value" id="avgConfidence">0%</div>
+        <div class="stat-change">Classification accuracy</div>
+    </div>
+    
+    <div class="stat-card" onclick="window.location.href='/review'">
+        <div class="stat-header">
+            <div class="stat-icon warning">⚠</div>
+        </div>
+        <div class="stat-label">Pending Review</div>
+        <div class="stat-value" id="pendingReview">0</div>
+        <div class="stat-change">Requires attention</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-header">
+            <div class="stat-icon success">🎯</div>
+        </div>
+        <div class="stat-label">CRM Success</div>
+        <div class="stat-value" id="crmSuccess">0%</div>
+        <div class="stat-change">Push success rate</div>
+    </div>
+</div>
+
+<!-- Quick Classify Section -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Quick Classify</h2>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-secondary" id="loadSampleBtn">Load Sample</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <form id="quickClassifyForm">
+            <div class="form-group">
+                <label class="form-label">Enter tickets (one per line)</label>
+                <textarea 
+                    id="quickTicketsInput" 
+                    class="form-textarea" 
+                    placeholder="Example:
+My account was charged twice this month. Can I get a refund?
+The app crashes when I try to upload files.
+What are the pricing options for the Enterprise plan?"
+                    rows="6"
+                ></textarea>
+                <p class="form-help">Enter one ticket per line, or drag and drop a text file</p>
+            </div>
+            
+            <div class="flex gap-4 items-center mb-4">
+                <label class="flex items-center gap-2">
+                    <input type="checkbox" id="useRealApi" checked>
+                    <span>Use Real OpenAI API</span>
+                </label>
+                <label class="flex items-center gap-2">
+                    <input type="checkbox" id="showDetailedResults">
+                    <span>Show Detailed Results</span>
+                </label>
+            </div>
+            
+            <div class="btn-group">
+                <button type="submit" class="btn btn-primary btn-lg">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z"/>
+                    </svg>
+                    Classify Tickets
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="window.location.href='/classify'">
+                    Advanced Options
+                </button>
+            </div>
+        </form>
+        
+        <!-- Results Container -->
+        <div id="quickResults" class="mt-6" style="display: none;">
+            <div class="card-header">
+                <h3 class="card-title">Classification Results</h3>
+                <button class="btn btn-sm btn-outline" onclick="document.getElementById('quickResults').style.display='none'">
+                    Close
+                </button>
+            </div>
+            <div id="quickResultsContent"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Recent Activity</h2>
+        <a href="/history" class="btn btn-sm btn-outline">View All</a>
+    </div>
+    <div class="card-body">
+        <div id="recentActivity"></div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Sample tickets for testing
+const SAMPLE_TICKETS = [
+    "I was charged twice for my subscription this month. Can I get a refund?",
+    "The application crashes every time I try to upload a file larger than 10MB.",
+    "I'm interested in upgrading to the Enterprise plan. What features are included?",
+    "My dashboard is showing incorrect data and I can't export reports."
+];
+
+// Load statistics on page load
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadStatistics();
+    await loadRecentActivity();
+    setupQuickClassify();
+    setupDragAndDrop();
+});
+
+// Load statistics
+async function loadStatistics() {
+    try {
+        const data = await API.getStatistics();
+        if (data.success) {
+            const stats = data.statistics;
+            document.getElementById('totalTickets').textContent = stats.total_tickets || 0;
+            document.getElementById('avgConfidence').textContent = formatConfidence(stats.average_confidence || 0);
+            document.getElementById('crmSuccess').textContent = `${stats.crm_success_rate || 0}%`;
+            
+            // Get review queue count
+            const reviewData = await API.getReviewQueue();
+            if (reviewData.success) {
+                document.getElementById('pendingReview').textContent = reviewData.count || 0;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load statistics:', error);
+    }
+}
+
+// Load recent activity
+async function loadRecentActivity() {
+    try {
+        const data = await API.getTickets(10, 0);
+        if (data.success && data.tickets.length > 0) {
+            renderRecentActivity(data.tickets);
+        } else {
+            document.getElementById('recentActivity').innerHTML = createEmptyState('No tickets classified yet', '📋');
+        }
+    } catch (error) {
+        console.error('Failed to load recent activity:', error);
+        document.getElementById('recentActivity').innerHTML = createEmptyState('Failed to load activity', '❌');
+    }
+}
+
+// Render recent activity
+function renderRecentActivity(tickets) {
+    const html = `
+        <div class="table-container">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Ticket ID</th>
+                        <th>Content</th>
+                        <th>Category</th>
+                        <th>Confidence</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tickets.map(ticket => `
+                        <tr>
+                            <td><code>${ticket.id}</code></td>
+                            <td>${truncateText(ticket.content, 60)}</td>
+                            <td><span class="badge ${getCategoryBadge(ticket.category)}">${ticket.category}</span></td>
+                            <td>
+                                <div class="flex items-center gap-2">
+                                    <div class="progress" style="width: 60px;">
+                                        <div class="progress-bar ${getConfidenceColor(ticket.confidence)}" 
+                                             style="width: ${ticket.confidence * 100}%"></div>
+                                    </div>
+                                    <span class="text-sm">${formatConfidence(ticket.confidence)}</span>
+                                </div>
+                            </td>
+                            <td class="text-sm text-neutral">${formatDate(ticket.timestamp)}</td>
+                            <td>
+                                ${ticket.requires_review 
+                                    ? '<span class="badge badge-warning">Review</span>' 
+                                    : '<span class="badge badge-success">Success</span>'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    document.getElementById('recentActivity').innerHTML = html;
+}
+
+// Setup quick classify form
+function setupQuickClassify() {
+    const form = document.getElementById('quickClassifyForm');
+    const loadSampleBtn = document.getElementById('loadSampleBtn');
+    
+    loadSampleBtn.addEventListener('click', () => {
+        document.getElementById('quickTicketsInput').value = SAMPLE_TICKETS.join('\n');
+        Toast.success('Sample tickets loaded');
+    });
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await performQuickClassify();
+    });
+}
+
+// Perform quick classification
+async function performQuickClassify() {
+    const textarea = document.getElementById('quickTicketsInput');
+    const useRealApi = document.getElementById('useRealApi').checked;
+    const showDetailed = document.getElementById('showDetailedResults').checked;
+    
+    const ticketTexts = parseTickets(textarea.value);
+    
+    // Validate
+    const validation = validateTickets(ticketTexts);
+    if (!validation.valid) {
+        Toast.error(validation.error);
+        return;
+    }
+    
+    try {
+        Loading.show('Classifying tickets...');
+        
+        const data = await API.classify(ticketTexts, useRealApi, 'mock');
+        
+        Loading.hide();
+        
+        if (data.success) {
+            Toast.success(`Successfully classified ${data.tickets.length} tickets`);
+            displayQuickResults(data.tickets, showDetailed);
+            
+            // Refresh statistics and recent activity
+            await loadStatistics();
+            await loadRecentActivity();
+            
+            // Clear input
+            textarea.value = '';
+        } else {
+            Toast.error(data.error || 'Classification failed');
+        }
+    } catch (error) {
+        Loading.hide();
+        Toast.error(error.message || 'Failed to classify tickets');
+    }
+}
+
+// Display quick results
+function displayQuickResults(tickets, showDetailed) {
+    const resultsDiv = document.getElementById('quickResults');
+    const contentDiv = document.getElementById('quickResultsContent');
+    
+    if (showDetailed) {
+        contentDiv.innerHTML = `
+            <div class="table-container mt-4">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Ticket</th>
+                            <th>Category</th>
+                            <th>Confidence</th>
+                            <th>Reasoning</th>
+                            <th>Review</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tickets.map(ticket => `
+                            <tr>
+                                <td style="max-width: 300px;">${ticket.content}</td>
+                                <td><span class="badge ${getCategoryBadge(ticket.category)}">${ticket.category}</span></td>
+                                <td>
+                                    <div class="progress">
+                                        <div class="progress-bar ${getConfidenceColor(ticket.confidence)}" 
+                                             style="width: ${ticket.confidence * 100}%"></div>
+                                    </div>
+                                    <span class="text-sm">${formatConfidence(ticket.confidence)}</span>
+                                </td>
+                                <td class="text-sm">${ticket.reasoning || 'N/A'}</td>
+                                <td>
+                                    ${ticket.requires_review 
+                                        ? '<span class="badge badge-warning">Yes</span>' 
+                                        : '<span class="badge badge-success">No</span>'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else {
+        contentDiv.innerHTML = `
+            <div class="mt-4">
+                ${tickets.map(ticket => `
+                    <div class="mb-4 p-4" style="border-left: 4px solid var(--primary); background: var(--neutral-50); border-radius: var(--radius-md);">
+                        <div class="font-semibold mb-2">Ticket: "${truncateText(ticket.content, 100)}"</div>
+                        <div class="flex gap-4">
+                            <span class="text-sm"><strong>Category:</strong> ${ticket.category}</span>
+                            <span class="text-sm"><strong>Confidence:</strong> ${formatConfidence(ticket.confidence)}</span>
+                            <span class="text-sm"><strong>CRM Status:</strong> ${ticket.crm_status || 'Success'}</span>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    resultsDiv.style.display = 'block';
+}
+
+// Setup drag and drop for file upload
+function setupDragAndDrop() {
+    const textarea = document.getElementById('quickTicketsInput');
+    
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        textarea.addEventListener(eventName, preventDefaults, false);
+    });
+    
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    ['dragenter', 'dragover'].forEach(eventName => {
+        textarea.addEventListener(eventName, () => {
+            textarea.style.borderColor = 'var(--primary)';
+            textarea.style.backgroundColor = 'var(--neutral-50)';
+        }, false);
+    });
+    
+    ['dragleave', 'drop'].forEach(eventName => {
+        textarea.addEventListener(eventName, () => {
+            textarea.style.borderColor = '';
+            textarea.style.backgroundColor = '';
+        }, false);
+    });
+    
+    textarea.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        
+        if (files.length > 0) {
+            handleFileUpload(files[0], (tickets) => {
+                textarea.value = tickets.join('\n');
+                Toast.success(`Loaded ${tickets.length} tickets from file`);
+            });
+        }
+    }, false);
+}
+</script>
+{% endblock %}
